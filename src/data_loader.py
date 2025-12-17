@@ -10,6 +10,9 @@ import yfinance as yf
 
 # Raw Name of the csv ESG file in data/raw/
 RAW_CSV_NAME = "esg_risk_ratings.csv"
+PROCESSED_DIR_NAME = "processed"
+YF_CACHE_NAME = "yf_cache.csv"
+
 
 # Name of the target columns (what we want to predict)
 TARGET_COL = "ESG_Risk_Level"
@@ -131,32 +134,64 @@ def load_yf_data(tickers: list[str]) -> pd.DataFrame:
     return df_yf
 
 
-def build_dataset(raw_dir: Path) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+def _processed_dir(base_data_dir: Path) -> Path:
+    out = base_data_dir / PROCESSED_DIR_NAME
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def load_yf_cache(base_data_dir: Path) -> pd.DataFrame:
+    cache_path = _processed_dir(base_data_dir) / YF_CACHE_NAME
+    if not cache_path.exists():
+        raise FileNotFoundError(f"Yahoo Finance cache not found at {cache_path}")
+    return pd.read_csv(cache_path)
+
+
+def save_yf_cache(df_yf: pd.DataFrame, base_data_dir: Path) -> Path:
+    cache_path = _processed_dir(base_data_dir) / YF_CACHE_NAME
+    df_yf.to_csv(cache_path, index=False)
+    return cache_path
+
+
+def build_dataset(
+    data_dir: Path,
+    use_cache: bool = True,
+    refresh_cache: bool = False,
+) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
     """
-    - load and clean ESG data 
-    - get data from Yahoo finance
+    - load and clean ESG data from data/raw/
+    - get Yahoo Finance indicators (from cache if available)
     - merge
-    - return X (features), y (target), df_merged (analysis)
+    - return X (features), y (target), df_merged
     """
+    raw_dir = data_dir / "raw"
+
     # 1) ESG
     df_esg_raw = load_esg_raw(raw_dir)
     df_esg_clean = clean_esg(df_esg_raw)
 
-    # 2) Yahoo Finance
+    # 2) Yahoo Finance (cache first)
     tickers = df_esg_clean["Ticker"].dropna().unique().tolist()
-    df_yf = load_yf_data(tickers)
+
+    df_yf = None
+    if use_cache and not refresh_cache:
+        try:
+            df_yf = load_yf_cache(data_dir)
+        except FileNotFoundError:
+            df_yf = None
+
+    if df_yf is None:
+        df_yf = load_yf_data(tickers)
+        save_yf_cache(df_yf, data_dir)
 
     # 3) Merge ESG + finance
     df_merged = df_esg_clean.merge(df_yf, on="Ticker", how="inner")
-    
 
-    # 4) Imputation of missing values 
-    df_merged[NUM_COLS] = df_merged[NUM_COLS].apply(
-        lambda col: col.fillna(col.median())
-    )
+    # 4) Imputation of missing values
+    df_merged[NUM_COLS] = df_merged[NUM_COLS].apply(lambda col: col.fillna(col.median()))
     df_merged[CAT_COLS] = df_merged[CAT_COLS].fillna("Unknown")
 
-    # 5) Encoding categorical in one-hot  
+    # 5) One-hot encoding
     X_num = df_merged[NUM_COLS]
     X_cat = pd.get_dummies(df_merged[CAT_COLS], drop_first=True)
     X = pd.concat([X_num, X_cat], axis=1)

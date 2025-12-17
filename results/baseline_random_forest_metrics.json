@@ -1,0 +1,9 @@
+{
+  "run_name": "baseline",
+  "model": "random_forest",
+  "task_type": "classification",
+  "accuracy": 0.7222222222222222,
+  "precision": 0.7099952516619183,
+  "recall": 0.7222222222222222,
+  "f1": 0.7109812523524107
+}
